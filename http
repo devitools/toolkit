@@ -65,26 +65,56 @@ __set_variable() {
   fi
 }
 
-__set_argument() {
+__set_header() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
     touch "$CONFIG_FILE"
   fi
-  local key="$1"
-  local value="$2"
+  local header_name="$1"
+  local header_value="$2"
+  local full_line="--header \"$header_name: $header_value\""
+  local search_pattern="^--header \"$header_name:"
 
-  # Handle curl argument format: --header "Authorization: Bearer token"
-  local full_line="$key \"$value\""
-  local escaped_key
-  escaped_key=${key//[[\.*^$()+?{|]/\\&}
-
-  if grep -q "^$escaped_key " "$CONFIG_FILE"; then
+  if grep -q "$search_pattern" "$CONFIG_FILE"; then
     if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
+      sed -i '' "s|$search_pattern.*|$full_line|" "$CONFIG_FILE"
     else
-      sed -i "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
+      sed -i "s|$search_pattern.*|$full_line|" "$CONFIG_FILE"
     fi
   else
     echo "$full_line" >> "$CONFIG_FILE"
+  fi
+}
+
+__remove_header() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        return
+    fi
+    local header_name="$1"
+    local search_pattern="^--header \"$header_name:"
+
+    if grep -q "$search_pattern" "$CONFIG_FILE"; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "/$search_pattern/d" "$CONFIG_FILE"
+        else
+            sed -i "/$search_pattern/d" "$CONFIG_FILE"
+        fi
+    fi
+}
+
+__get_header_value() {
+  local header_name="$1"
+  local config_file="$CONFIG_FILE"
+  local line=""
+
+  if [[ -f "$config_file" ]]; then
+    line=$(grep "^--header \"$header_name:" "$config_file" | head -n 1)
+  fi
+
+  if [[ -n "$line" ]]; then
+    # Extrai 'value' de '--header "name: value"'
+    value="${line#*--header \"$header_name: }"
+    value="${value%\"}"
+    echo -n "$value"
   fi
 }
 
@@ -286,7 +316,7 @@ login() {
   fi
 
   if [[ -n "$TOKEN" && "$TOKEN" != "null" ]]; then
-    __set_argument "--header" "Authorization: Bearer $TOKEN"
+    __set_header "Authorization" "Bearer $TOKEN"
     echo -e "${GREEN}Login successful. Token stored.${NC}"
   else
     echo -e "${RED}Login failed or token not found.${NC}"
@@ -296,15 +326,9 @@ login() {
 }
 
 logout() {
-  # Remove both old and new format authorization entries
   local removed=false
-
   if grep -q '^--header "Authorization:' "$CONFIG_FILE"; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/^--header "Authorization:/d' "$CONFIG_FILE"
-    else
-      sed -i '/^--header "Authorization:/d' "$CONFIG_FILE"
-    fi
+    __remove_header "Authorization"
     removed=true
   fi
 
@@ -313,6 +337,45 @@ logout() {
   else
     echo -e "${YELLOW}No authorization token found.${NC}"
   fi
+  exit 0
+}
+
+header() {
+  local ACTION="$1"
+  shift
+  local NAME="$1"
+  shift
+  local VALUE="$*"
+
+  case "$ACTION" in
+    get)
+      if [[ -z "$NAME" ]]; then
+        echo -e "${RED}Usage: http header get <name>${NC}" >&2
+        exit 1
+      fi
+      local current_value
+      current_value=$(__get_header_value "$NAME")
+      if [[ -n "$current_value" ]]; then
+        echo "$current_value"
+      else
+        echo -e "${YELLOW}Header '$NAME' not found.${NC}" >&2
+        exit 1
+      fi
+      ;;
+    set)
+      if [[ -z "$NAME" ]] || [[ -z "$VALUE" ]]; then
+        echo -e "${RED}Usage: http header set <name> <value>${NC}" >&2
+        exit 1
+      fi
+      __set_header "$NAME" "$VALUE"
+      echo -e "${GREEN}Header '$NAME' set to '$VALUE'.${NC}"
+      ;;
+    *)
+      echo -e "${RED}Unknown header command: $ACTION${NC}"
+      echo "Use 'http --help' for usage information."
+      exit 1
+      ;;
+  esac
   exit 0
 }
 
@@ -381,6 +444,10 @@ case "$1" in
   logout)
     logout
     ;;
+  header)
+    shift
+    header "$@"
+    ;;
   get|post|put|patch|delete)
     METHOD=$1
     shift
@@ -391,6 +458,8 @@ case "$1" in
     echo
     echo -e "${YELLOW}Configuration:${NC}"
     echo "  http setup <host>                             Set the base URL for requests"
+    echo "  http header get <name>                        Get a stored header"
+    echo "  http header set <name> <value>                Set a stored header"
     echo
     echo -e "${YELLOW}Authentication:${NC}"
     echo "  http login [endpoint] --email <email> --password <password>"
