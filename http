@@ -476,6 +476,8 @@ case "$1" in
     echo
     echo -e "${YELLOW}Examples:${NC}"
     echo "  http setup http://localhost:8080"
+    echo "  http header set Accept \"application/json\""
+    echo "  http header get Accept"
     echo "  http login --email user@example.com --password ***"
     echo "  http get /users"
     echo "  http post /users '{\"name\":\"John\",\"email\":\"john@example.com\"}'"
