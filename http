@@ -26,7 +26,7 @@ STATUS_CODE_SUCCESS='\033[42;97;1m'
 STATUS_CODE_FAIL='\033[43;97;1m'
 STATUS_CODE_ERROR='\033[41;97;1m'
 
-__get_config_value() {
+__get_variable_value() {
   local key="$1"
   local local_curlrc="$CONFIG_FILE"
   local home_curlrc="$HOME/.curlrc"
@@ -174,7 +174,7 @@ __request() {
       ;;
   esac
 
-  HTTP_HOST=$(__get_config_value "variable host")
+  HTTP_HOST=$(__get_variable_value "variable host")
   if [[ "$ENDPOINT" == /* ]]; then
     HTTP_LOCATION="${HTTP_HOST}${ENDPOINT}"
     HTTP_EXPAND_URL="{{host}}$ENDPOINT"
@@ -199,9 +199,9 @@ __request() {
   echo "$RESPONSE"
 }
 
-configure() {
+setup() {
   if [[ -z "$1" ]]; then
-    echo -e "${RED}Usage: http configure <base-url>${NC}" >&2
+    echo -e "${RED}Usage: http configure <host>${NC}" >&2
     exit 1
   fi
 
@@ -262,7 +262,6 @@ login() {
   fi
 
   echo -e "${YELLOW}Attempting login...${NC}"
-  __beautify "$JSON_DATA"
   echo
 
   # Use the request method for consistency
@@ -277,13 +276,9 @@ login() {
     BODY_CONTENT=$(echo "$RESPONSE" | sed -n '/^{/,$p')
   fi
 
-  __beautify "$BODY_CONTENT"
-
-  # Extract token - try multiple possible fields
   if command -v jq >/dev/null 2>&1; then
     TOKEN=$(echo "$BODY_CONTENT" | jq -r '.data.token // .token // .access_token // empty')
   else
-    # Fallback without jq
     TOKEN=$(echo "$BODY_CONTENT" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
     if [[ -z "$TOKEN" ]]; then
       TOKEN=$(echo "$BODY_CONTENT" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
@@ -375,9 +370,9 @@ run() {
 
 # Main command handling
 case "$1" in
-  configure)
+  setup)
     shift
-    configure "$@"
+    setup "$@"
     ;;
   login)
     shift
@@ -395,30 +390,30 @@ case "$1" in
     echo -e "${BLUE}HTTP CLI Tool${NC}"
     echo
     echo -e "${YELLOW}Configuration:${NC}"
-    echo "  http configure <base_url>                    Set the base URL for requests"
+    echo "  http setup <host>                             Set the base URL for requests"
     echo
     echo -e "${YELLOW}Authentication:${NC}"
-    echo "  http login [endpoint] --email=<email> --password=<password>"
-    echo "                                               Login and store auth token"
-    echo "                                               (defaults to /api/auth/login)"
-    echo "  http logout                                  Remove stored auth token"
+    echo "  http login [endpoint] --email <email> --password <password>"
+    echo "                                                Login and store auth token"
+    echo "                                                (defaults to /api/auth/login)"
+    echo "  http logout                                   Remove stored auth token"
     echo
     echo -e "${YELLOW}HTTP Methods:${NC}"
-    echo "  http get <endpoint> [curl_args...]          GET request"
-    echo "  http post <endpoint> '<json_data>' [args...] POST request with JSON data"
-    echo "  http put <endpoint> '<json_data>' [args...]  PUT request with JSON data"
+    echo "  http get <endpoint> [curl_args...]            GET request"
+    echo "  http post <endpoint> '<json_data>' [args...]  POST request with JSON data"
+    echo "  http put <endpoint> '<json_data>' [args...]   PUT request with JSON data"
     echo "  http patch <endpoint> '<json_data>' [args...] PATCH request with JSON data"
-    echo "  http delete <endpoint> [curl_args...]       DELETE request"
+    echo "  http delete <endpoint> [curl_args...]         DELETE request"
     echo
     echo -e "${YELLOW}Examples:${NC}"
-    echo "  http configure https://api.example.com"
-    echo "  http login --email=user@example.com --password=secret"
+    echo "  http setup http://localhost:8080"
+    echo "  http login --email user@example.com --password ***"
     echo "  http get /users"
     echo "  http post /users '{\"name\":\"John\",\"email\":\"john@example.com\"}'"
     ;;
   *)
     echo -e "${RED}Unknown command: $1${NC}"
-    echo "Use 'http help' for usage information."
+    echo "Use 'http --help' for usage information."
     exit 1
     ;;
 esac
