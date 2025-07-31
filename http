@@ -204,13 +204,21 @@ __request() {
       ;;
   esac
 
-  HTTP_HOST=$(__get_variable_value "variable host")
-  if [[ "$ENDPOINT" == /* ]]; then
-    HTTP_LOCATION="${HTTP_HOST}${ENDPOINT}"
-    HTTP_EXPAND_URL="{{host}}$ENDPOINT"
+  # Check if endpoint is a complete URL (starts with http:// or https://)
+  if [[ "$ENDPOINT" =~ ^https?:// ]]; then
+    # Complete URL provided, use it directly
+    HTTP_LOCATION="$ENDPOINT"
+    HTTP_EXPAND_URL="$ENDPOINT"
   else
-    HTTP_LOCATION="${HTTP_HOST}/${ENDPOINT}"
-    HTTP_EXPAND_URL="{{host}}/$ENDPOINT"
+    # Relative endpoint, use host configuration
+    HTTP_HOST=$(__get_variable_value "variable host")
+    if [[ "$ENDPOINT" == /* ]]; then
+      HTTP_LOCATION="${HTTP_HOST}${ENDPOINT}"
+      HTTP_EXPAND_URL="{{host}}$ENDPOINT"
+    else
+      HTTP_LOCATION="${HTTP_HOST}/${ENDPOINT}"
+      HTTP_EXPAND_URL="{{host}}/$ENDPOINT"
+    fi
   fi
 
   HTTP_VERB=$(echo "$HTTP_VERB" | tr '[:lower:]' '[:upper:]')

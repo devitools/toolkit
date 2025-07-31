@@ -29,12 +29,67 @@ The PHP tool is a bash script that wraps Docker to provide seamless PHP executio
 
 ## 🚀 Installation
 
-1. Ensure Docker is installed and running
-2. Make the script executable:
+### Prerequisites
+- Docker must be installed and running on your system
+- Compatible with macOS, Linux, and Windows (with WSL)
+
+### Installation Steps
+
+1. **Make the script executable:**
+   ```bash
+   chmod +x php
+   ```
+
+2. **Add to PATH for global access:**
+   
+   **Option A: Copy to a directory already in PATH**
+   ```bash
+   sudo cp php /usr/local/bin/
+   ```
+   
+   **Option B: Add ~/.local/bin to your PATH (Recommended)**
+   ```bash
+   # Add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
+   echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+   
+   **Option C: Create symbolic link**
+   ```bash
+   sudo ln -s $(pwd)/php /usr/local/bin/php
+   ```
+
+3. **Verify installation:**
+   ```bash
+   php --version
+   # or
+   php status
+   ```
+
+### PATH Configuration
+
+To make the `php` tool available globally in your terminal, ensure `~/.local/bin` is in your PATH:
+
 ```bash
-chmod +x php
+# For Bash users
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
+# For Zsh users  
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# For Fish users
+fish_add_path ~/.local/bin
 ```
-3. Place it in your PATH or use directly
+
+### Docker Setup Verification
+
+```bash
+# Verify Docker is running
+docker info
+
+# Test PHP container creation
+php -v
+```
 
 ## ⚡ Quick Start
 
@@ -305,6 +360,33 @@ Configure PHP interpreter to use the script path for remote PHP execution.
 2. **Use appropriate images**: Choose the smallest image that meets your needs
 3. **Optimize volumes**: Only mount necessary directories
 4. **Network optimization**: Use host networking for development if possible
+
+## 📍 File Locations
+
+- **Script location**: `~/.local/bin/php`
+- **Log file**: `~/.local/bin/php.log` (configurable via `PHP_CLI_LOG_FILE`)
+- **Container naming**: `php-cli-<8-char-hash>` based on current directory
+- **Working directory**: Current directory mounted to `/var/www/html` in container
+
+## 🔗 Integration Tips
+
+### Shell Aliases
+Create convenient aliases for common tasks:
+
+```bash
+# Add to your shell profile
+alias pa="php artisan"
+alias pc="php composer"
+alias psh="php shell"
+alias pst="php status"
+```
+
+### IDE Integration
+Configure your IDE to use the containerized PHP:
+
+- **VS Code**: Set `php.executablePath` to the script location
+- **PhpStorm**: Configure remote PHP interpreter pointing to the script
+- **Vim/Neovim**: Use the script path in PHP-related plugins
 
 ---
 
