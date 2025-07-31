@@ -26,7 +26,7 @@ STATUS_CODE_SUCCESS='\033[42;97;1m'
 STATUS_CODE_FAIL='\033[43;97;1m'
 STATUS_CODE_ERROR='\033[41;97;1m'
 
-get_variable() {
+__get_config_value() {
   local local_curlrc="$CONFIG_FILE"
   local home_curlrc="$HOME/.curlrc"
   local value=""
@@ -39,66 +39,60 @@ get_variable() {
     value=$(grep '^variable host=' "$home_curlrc" | head -n1)
   fi
 
-  value=$(echo "$value" | sed 's/^variable host= *//;s/^"//;s/"$//;s/ *$//')
+  value=$(echo "$value" | sed 's/^variable host=*//;s/^"//;s/"$//;s/ *$//')
 
   echo -n "$value"
 }
 
-configure() {
-  if [[ -z "$1" ]]; then
-    echo -e "${RED}Usage: http configure <base-url>${NC}" >&2
-    exit 1
-  fi
-
-  local host="$1"
-  if ! grep -q "^variable host=" "$CONFIG_FILE" 2>/dev/null; then
-    echo "variable host=$host" >> "$CONFIG_FILE"
-  else
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' "s|^variable host=.*|variable host=$host|" "$CONFIG_FILE"
-    else
-      sed -i "s|^variable host=.*|variable host=$host|" "$CONFIG_FILE"
-    fi
-  fi
-  echo -e "${GREEN} Host '$host' configured in '$CONFIG_FILE'${NC}"
-  exit 0
-}
-
-save_to_config_file() {
+__set_config_value() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
     touch "$CONFIG_FILE"
   fi
-  local key=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+  local key="$1"
   local value="$2"
 
-  # Use a more portable approach for sed
-  if grep -q "^$key=" "$CONFIG_FILE"; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
+  if [[ "$key" == variable* ]]; then
+    if grep -q "^$key=" "$CONFIG_FILE"; then
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
+      else
+        sed -i "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
+      fi
     else
-      sed -i "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
+      echo "$key=$value" >> "$CONFIG_FILE"
     fi
-  else
-    echo "$key=$value" >> "$CONFIG_FILE"
-  fi
-}
+  elif [[ "$key" == --* ]]; then
+    local full_line="$key \"$value\""
+    local escaped_key
+    escaped_key=${key//[[\.*^$()+?{|]/\\&}
 
-logout() {
-  if grep -q '^AUTHORIZATION=' "$CONFIG_FILE"; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/^AUTHORIZATION=/d' "$CONFIG_FILE"
+    if grep -q "^$escaped_key " "$CONFIG_FILE"; then
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
+      else
+        sed -i "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
+      fi
     else
-      sed -i '/^AUTHORIZATION=/d' "$CONFIG_FILE"
+      echo "$full_line" >> "$CONFIG_FILE"
     fi
-    echo -e "${GREEN}Authorization token removed.${NC}"
   else
-    echo -e "${YELLOW}No authorization token found.${NC}"
+    # Handle regular key=value format (uppercase key) - for backward compatibility
+    local upper_key
+    upper_key=$(echo "$key" | tr '[:lower:]' '[:upper:]')
+    if grep -q "^$upper_key=" "$CONFIG_FILE"; then
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|^$upper_key=.*|$upper_key=$value|" "$CONFIG_FILE"
+      else
+        sed -i "s|^$upper_key=.*|$upper_key=$value|" "$CONFIG_FILE"
+      fi
+    else
+      echo "$upper_key=$value" >> "$CONFIG_FILE"
+    fi
   fi
-  exit 0
 }
 
 # Function to colorize headers
-colorize_headers() {
+__colorize_headers() {
   while IFS= read -r line; do
     if [[ "$line" =~ ^([^:]+):[[:space:]]*(.*) ]]; then
       header_name="${BASH_REMATCH[1]}"
@@ -110,7 +104,7 @@ colorize_headers() {
   done
 }
 
-beautify() {
+__beautify() {
   local json="$1"
 
   if [[ -z "$json" ]]; then
@@ -130,6 +124,18 @@ beautify() {
     -e 's/^([[:space:]]*)([ \t])([0-9]+)([ \t]*[,}])/\1'"${JSON_NUMBER_COLOR}"'"\2"'"${COLOR_RESET}"'/g' \
     -e "s/^([[:space:]]*)(true|false)/\1${JSON_BOOLEAN_COLOR}\2${COLOR_RESET}/g" \
     -e "s/^([[:space:]]*)null/\1${JSON_NULL_COLOR}null${COLOR_RESET}/g"
+}
+
+configure() {
+  if [[ -z "$1" ]]; then
+    echo -e "${RED}Usage: http configure <base-url>${NC}" >&2
+    exit 1
+  fi
+
+  local host="$1"
+  __set_config_value "variable host" "$host"
+  echo -e "${GREEN} Host '$host' configured in '$CONFIG_FILE'${NC}"
+  exit 0
 }
 
 login() {
@@ -170,11 +176,11 @@ login() {
   fi
 
   echo -e "${YELLOW}Attempting login...${NC}"
-  beautify "$JSON_DATA"
+  __beautify "$JSON_DATA"
   echo
 
   # Use the request method for consistency
-  RESPONSE=$(request "post" "$ENDPOINT" "$JSON_DATA")
+  RESPONSE=$(__request "post" "$ENDPOINT" "$JSON_DATA")
 
   # Extract only the body from the response (remove headers)
   SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
@@ -185,7 +191,7 @@ login() {
     BODY_CONTENT=$(echo "$RESPONSE" | sed -n '/^{/,$p')
   fi
 
-  beautify "$BODY_CONTENT"
+  __beautify "$BODY_CONTENT"
 
   # Extract token - try multiple possible fields
   if command -v jq >/dev/null 2>&1; then
@@ -199,7 +205,7 @@ login() {
   fi
 
   if [[ -n "$TOKEN" && "$TOKEN" != "null" ]]; then
-    save_to_config_file "AUTHORIZATION" "$TOKEN"
+    __set_config_value "--header" "Authorization: Bearer $TOKEN"
     echo -e "${GREEN}Login successful. Token stored.${NC}"
   else
     echo -e "${RED}Login failed or token not found.${NC}"
@@ -208,7 +214,28 @@ login() {
   exit 0
 }
 
-request() {
+logout() {
+  # Remove both old and new format authorization entries
+  local removed=false
+
+  if grep -q '^--header "Authorization:' "$CONFIG_FILE"; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' '/^--header "Authorization:/d' "$CONFIG_FILE"
+    else
+      sed -i '/^--header "Authorization:/d' "$CONFIG_FILE"
+    fi
+    removed=true
+  fi
+
+  if [[ "$removed" == "true" ]]; then
+    echo -e "${GREEN}Authorization token removed.${NC}"
+  else
+    echo -e "${YELLOW}No authorization token found.${NC}"
+  fi
+  exit 0
+}
+
+__request() {
   local HTTP_VERB="$1"
   shift
 
@@ -260,7 +287,7 @@ request() {
       ;;
   esac
 
-  HTTP_HOST=$(get_variable)
+  HTTP_HOST=$(__get_config_value)
   if [[ "$ENDPOINT" == /* ]]; then
     HTTP_LOCATION="${HTTP_HOST}${ENDPOINT}"
     HTTP_EXPAND_URL="{{host}}$ENDPOINT"
@@ -289,13 +316,13 @@ run() {
   local METHOD="$1"
   shift
 
-  RESPONSE=$(request "$METHOD" "$@")
+  RESPONSE=$(__request "$METHOD" "$@")
 
   SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
 
   if [[ -n "$SEPARATOR_LINE" ]]; then
     if [[ "$VERBOSE_MODE" -eq 1 ]]; then
-      echo "$RESPONSE" | head -n "$((SEPARATOR_LINE - 1))" | colorize_headers
+      echo "$RESPONSE" | head -n "$((SEPARATOR_LINE - 1))" | __colorize_headers
       echo
     fi
 
@@ -303,20 +330,20 @@ run() {
     BODY_CONTENT=$(echo "$BODY_CONTENT" | sed '/^[[:space:]]*$/d')
 
     if [[ -n "$BODY_CONTENT" ]]; then
-      beautify "$BODY_CONTENT"
+      __beautify "$BODY_CONTENT"
     fi
   else
     if [[ "$VERBOSE_MODE" -eq 1 ]]; then
       HEADERS=$(echo "$RESPONSE" | sed '/^{/,$d')
       if [[ -n "$HEADERS" ]]; then
-        echo "$HEADERS" | colorize_headers
+        echo "$HEADERS" | __colorize_headers
         echo
       fi
     fi
 
     BODY=$(echo "$RESPONSE" | sed -n '/^{/,$p')
     if [[ -n "$BODY" ]]; then
-      beautify "$BODY"
+      __beautify "$BODY"
     else
       echo "$RESPONSE"
     fi
