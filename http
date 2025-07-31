@@ -27,19 +27,21 @@ STATUS_CODE_FAIL='\033[43;97;1m'
 STATUS_CODE_ERROR='\033[41;97;1m'
 
 __get_config_value() {
+  local key="$1"
   local local_curlrc="$CONFIG_FILE"
   local home_curlrc="$HOME/.curlrc"
   local value=""
 
   if [[ -f "$local_curlrc" ]]; then
-    value=$(grep '^variable host=' "$local_curlrc" | head -n1)
+    value=$(grep "^$key=" "$local_curlrc" | head -n1)
   fi
 
   if [[ -z "$value" && -f "$home_curlrc" ]]; then
-    value=$(grep '^variable host=' "$home_curlrc" | head -n1)
+    value=$(grep "^$key=" "$home_curlrc" | head -n1)
   fi
 
-  value=$(echo "$value" | sed 's/^variable host=*//;s/^"//;s/"$//;s/ *$//')
+  # Extract only the value part after the = sign
+  value=$(echo "$value" | sed "s/^$key=//;s/^\"//;s/\"\$//;s/ *\$//")
 
   echo -n "$value"
 }
@@ -172,7 +174,7 @@ __request() {
       ;;
   esac
 
-  HTTP_HOST=$(__get_config_value)
+  HTTP_HOST=$(__get_config_value "variable host")
   if [[ "$ENDPOINT" == /* ]]; then
     HTTP_LOCATION="${HTTP_HOST}${ENDPOINT}"
     HTTP_EXPAND_URL="{{host}}$ENDPOINT"
@@ -210,32 +212,45 @@ configure() {
 }
 
 login() {
-  ENDPOINT=$1
-  if [[ "$ENDPOINT" != /* ]]; then
-    ENDPOINT="/api/auth/login"
-    shift 0
-  else
-    shift 1
-  fi
+  local ENDPOINT="/api/auth/login"
+  local EMAIL=""
+  local PASSWORD=""
 
-  EMAIL=""
-  PASSWORD=""
-
-  # Parse arguments
+  # Parse arguments - support curl-like syntax
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
+      --email)
+        EMAIL="$2"
+        shift 2
+        ;;
       --email=*)
         EMAIL="${1#--email=}"
+        shift
+        ;;
+      --password)
+        PASSWORD="$2"
+        shift 2
         ;;
       --password=*)
         PASSWORD="${1#--password=}"
+        shift
+        ;;
+      /*)
+        # Custom endpoint starting with /
+        ENDPOINT="$1"
+        shift
+        ;;
+      *)
+        echo -e "${RED}Error: Unknown parameter '$1'${NC}"
+        echo -e "${YELLOW}Usage: http login [/custom/endpoint] --email <email> --password <password>${NC}"
+        exit 1
         ;;
     esac
-    shift
   done
 
   if [[ -z "$EMAIL" || -z "$PASSWORD" ]]; then
     echo -e "${RED}Error: both --email and --password must be provided.${NC}"
+    echo -e "${YELLOW}Usage: http login [/custom/endpoint] --email <email> --password <password>${NC}"
     exit 1
   fi
 
