@@ -42,9 +42,6 @@ A Docker abstraction to easily use PHP through containers, with per-project isol
 
 [📖 Complete PHP documentation](php.md)
 
-### 📝 Poetry
-Utility for Python project management with Poetry.
-
 ## 🚀 Installation
 
 1. Clone this repository:
@@ -55,7 +52,7 @@ cd toolkit
 
 2. Make the scripts executable:
 ```bash
-chmod +x http php poetry
+chmod +x http php
 ```
 
 3. Add to your PATH (optional):
@@ -66,7 +63,7 @@ export PATH="$PATH:/path/to/toolkit"
 
 Or copy the scripts to a directory already in PATH:
 ```bash
-cp http php poetry ~/.local/bin/
+cp http php ~/.local/bin/
 ```
 
 ## 💡 Usage
@@ -110,7 +107,6 @@ toolkit/
 ├── http.md           # HTTP documentation
 ├── php               # PHP/Docker utility
 ├── php.md            # PHP documentation
-└── poetry            # Poetry/Python utility
 ```
 
 ## 🎨 Features
