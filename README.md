@@ -106,7 +106,7 @@ toolkit/
 ├── http              # HTTP/curl utility
 ├── http.md           # HTTP documentation
 ├── php               # PHP/Docker utility
-├── php.md            # PHP documentation
+└── php.md            # PHP documentation
 ```
 
 ## 🎨 Features
