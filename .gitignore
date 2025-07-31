@@ -3,3 +3,4 @@ poetry
 
 .idea
 .DS_Store
+.http.*

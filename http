@@ -111,8 +111,8 @@ __get_header_value() {
   fi
 
   if [[ -n "$line" ]]; then
-    # Extrai 'value' de '--header "name: value"'
-    value="${line#*--header \"$header_name: }"
+    local prefix="--header \"$header_name: "
+    value="${line#"$prefix"}"
     value="${value%\"}"
     echo -n "$value"
   fi
