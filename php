@@ -11,18 +11,21 @@ NETWORK="${PHP_CLI_NETWORK:-}"
 
 # Generate unique container name based on current directory
 generate_container_name() {
-    local current_dir="$(pwd)"
+    local current_dir
+    local dir_hash
+
+    current_dir="$(pwd)"
 
     # Cross-platform hash generation (macOS and Linux compatible)
     if command -v shasum >/dev/null 2>&1; then
         # macOS
-        local dir_hash=$(echo "$current_dir" | shasum -a 256 | cut -c1-8)
+        dir_hash=$(echo "$current_dir" | shasum -a 256 | cut -c1-8)
     elif command -v sha256sum >/dev/null 2>&1; then
         # Linux
-        local dir_hash=$(echo "$current_dir" | sha256sum | cut -c1-8)
+        dir_hash=$(echo "$current_dir" | sha256sum | cut -c1-8)
     else
         # Fallback: use a simpler hash based on directory name
-        local dir_hash=$(echo "$current_dir" | cksum | cut -d' ' -f1)
+        dir_hash=$(echo "$current_dir" | cksum | cut -d' ' -f1)
     fi
 
     echo "${CONTAINER_BASE_NAME}-${dir_hash}"
