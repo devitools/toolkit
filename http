@@ -44,54 +44,48 @@ __get_config_value() {
   echo -n "$value"
 }
 
-__set_config_value() {
+__set_variable() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
     touch "$CONFIG_FILE"
   fi
   local key="$1"
   local value="$2"
 
-  if [[ "$key" == variable* ]]; then
-    if grep -q "^$key=" "$CONFIG_FILE"; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
-      else
-        sed -i "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
-      fi
+  # Handle curl variable format: variable host=value
+  if grep -q "^$key=" "$CONFIG_FILE"; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
     else
-      echo "$key=$value" >> "$CONFIG_FILE"
-    fi
-  elif [[ "$key" == --* ]]; then
-    local full_line="$key \"$value\""
-    local escaped_key
-    escaped_key=${key//[[\.*^$()+?{|]/\\&}
-
-    if grep -q "^$escaped_key " "$CONFIG_FILE"; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
-      else
-        sed -i "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
-      fi
-    else
-      echo "$full_line" >> "$CONFIG_FILE"
+      sed -i "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
     fi
   else
-    # Handle regular key=value format (uppercase key) - for backward compatibility
-    local upper_key
-    upper_key=$(echo "$key" | tr '[:lower:]' '[:upper:]')
-    if grep -q "^$upper_key=" "$CONFIG_FILE"; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s|^$upper_key=.*|$upper_key=$value|" "$CONFIG_FILE"
-      else
-        sed -i "s|^$upper_key=.*|$upper_key=$value|" "$CONFIG_FILE"
-      fi
-    else
-      echo "$upper_key=$value" >> "$CONFIG_FILE"
-    fi
+    echo "$key=$value" >> "$CONFIG_FILE"
   fi
 }
 
-# Function to colorize headers
+__set_argument() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    touch "$CONFIG_FILE"
+  fi
+  local key="$1"
+  local value="$2"
+
+  # Handle curl argument format: --header "Authorization: Bearer token"
+  local full_line="$key \"$value\""
+  local escaped_key
+  escaped_key=${key//[[\.*^$()+?{|]/\\&}
+
+  if grep -q "^$escaped_key " "$CONFIG_FILE"; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
+    else
+      sed -i "s|^$escaped_key .*|$full_line|" "$CONFIG_FILE"
+    fi
+  else
+    echo "$full_line" >> "$CONFIG_FILE"
+  fi
+}
+
 __colorize_headers() {
   while IFS= read -r line; do
     if [[ "$line" =~ ^([^:]+):[[:space:]]*(.*) ]]; then
@@ -124,115 +118,6 @@ __beautify() {
     -e 's/^([[:space:]]*)([ \t])([0-9]+)([ \t]*[,}])/\1'"${JSON_NUMBER_COLOR}"'"\2"'"${COLOR_RESET}"'/g' \
     -e "s/^([[:space:]]*)(true|false)/\1${JSON_BOOLEAN_COLOR}\2${COLOR_RESET}/g" \
     -e "s/^([[:space:]]*)null/\1${JSON_NULL_COLOR}null${COLOR_RESET}/g"
-}
-
-configure() {
-  if [[ -z "$1" ]]; then
-    echo -e "${RED}Usage: http configure <base-url>${NC}" >&2
-    exit 1
-  fi
-
-  local host="$1"
-  __set_config_value "variable host" "$host"
-  echo -e "${GREEN} Host '$host' configured in '$CONFIG_FILE'${NC}"
-  exit 0
-}
-
-login() {
-  ENDPOINT=$1
-  if [[ "$ENDPOINT" != /* ]]; then
-    ENDPOINT="/api/auth/login"
-    shift 0
-  else
-    shift 1
-  fi
-
-  EMAIL=""
-  PASSWORD=""
-
-  # Parse arguments
-  while [[ "$#" -gt 0 ]]; do
-    case "$1" in
-      --email=*)
-        EMAIL="${1#--email=}"
-        ;;
-      --password=*)
-        PASSWORD="${1#--password=}"
-        ;;
-    esac
-    shift
-  done
-
-  if [[ -z "$EMAIL" || -z "$PASSWORD" ]]; then
-    echo -e "${RED}Error: both --email and --password must be provided.${NC}"
-    exit 1
-  fi
-
-  # Build JSON properly - fallback if jq is not available
-  if command -v jq >/dev/null 2>&1; then
-    JSON_DATA=$(jq -n --arg email "$EMAIL" --arg password "$PASSWORD" '{email: $email, password: $password}')
-  else
-    JSON_DATA="{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}"
-  fi
-
-  echo -e "${YELLOW}Attempting login...${NC}"
-  __beautify "$JSON_DATA"
-  echo
-
-  # Use the request method for consistency
-  RESPONSE=$(__request "post" "$ENDPOINT" "$JSON_DATA")
-
-  # Extract only the body from the response (remove headers)
-  SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
-  if [[ -n "$SEPARATOR_LINE" ]]; then
-    BODY_CONTENT=$(echo "$RESPONSE" | tail -n +$((SEPARATOR_LINE + 1)))
-    BODY_CONTENT=$(echo "$BODY_CONTENT" | sed '/^[[:space:]]*$/d')
-  else
-    BODY_CONTENT=$(echo "$RESPONSE" | sed -n '/^{/,$p')
-  fi
-
-  __beautify "$BODY_CONTENT"
-
-  # Extract token - try multiple possible fields
-  if command -v jq >/dev/null 2>&1; then
-    TOKEN=$(echo "$BODY_CONTENT" | jq -r '.data.token // .token // .access_token // empty')
-  else
-    # Fallback without jq
-    TOKEN=$(echo "$BODY_CONTENT" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-    if [[ -z "$TOKEN" ]]; then
-      TOKEN=$(echo "$BODY_CONTENT" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
-    fi
-  fi
-
-  if [[ -n "$TOKEN" && "$TOKEN" != "null" ]]; then
-    __set_config_value "--header" "Authorization: Bearer $TOKEN"
-    echo -e "${GREEN}Login successful. Token stored.${NC}"
-  else
-    echo -e "${RED}Login failed or token not found.${NC}"
-    exit 1
-  fi
-  exit 0
-}
-
-logout() {
-  # Remove both old and new format authorization entries
-  local removed=false
-
-  if grep -q '^--header "Authorization:' "$CONFIG_FILE"; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/^--header "Authorization:/d' "$CONFIG_FILE"
-    else
-      sed -i '/^--header "Authorization:/d' "$CONFIG_FILE"
-    fi
-    removed=true
-  fi
-
-  if [[ "$removed" == "true" ]]; then
-    echo -e "${GREEN}Authorization token removed.${NC}"
-  else
-    echo -e "${YELLOW}No authorization token found.${NC}"
-  fi
-  exit 0
 }
 
 __request() {
@@ -310,6 +195,115 @@ __request() {
   )
 
   echo "$RESPONSE"
+}
+
+configure() {
+  if [[ -z "$1" ]]; then
+    echo -e "${RED}Usage: http configure <base-url>${NC}" >&2
+    exit 1
+  fi
+
+  local host="$1"
+  __set_variable "variable host" "$host"
+  echo -e "${GREEN} Host '$host' configured in '$CONFIG_FILE'${NC}"
+  exit 0
+}
+
+login() {
+  ENDPOINT=$1
+  if [[ "$ENDPOINT" != /* ]]; then
+    ENDPOINT="/api/auth/login"
+    shift 0
+  else
+    shift 1
+  fi
+
+  EMAIL=""
+  PASSWORD=""
+
+  # Parse arguments
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --email=*)
+        EMAIL="${1#--email=}"
+        ;;
+      --password=*)
+        PASSWORD="${1#--password=}"
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$EMAIL" || -z "$PASSWORD" ]]; then
+    echo -e "${RED}Error: both --email and --password must be provided.${NC}"
+    exit 1
+  fi
+
+  # Build JSON properly - fallback if jq is not available
+  if command -v jq >/dev/null 2>&1; then
+    JSON_DATA=$(jq -n --arg email "$EMAIL" --arg password "$PASSWORD" '{email: $email, password: $password}')
+  else
+    JSON_DATA="{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}"
+  fi
+
+  echo -e "${YELLOW}Attempting login...${NC}"
+  __beautify "$JSON_DATA"
+  echo
+
+  # Use the request method for consistency
+  RESPONSE=$(__request "post" "$ENDPOINT" "$JSON_DATA")
+
+  # Extract only the body from the response (remove headers)
+  SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
+  if [[ -n "$SEPARATOR_LINE" ]]; then
+    BODY_CONTENT=$(echo "$RESPONSE" | tail -n +$((SEPARATOR_LINE + 1)))
+    BODY_CONTENT=$(echo "$BODY_CONTENT" | sed '/^[[:space:]]*$/d')
+  else
+    BODY_CONTENT=$(echo "$RESPONSE" | sed -n '/^{/,$p')
+  fi
+
+  __beautify "$BODY_CONTENT"
+
+  # Extract token - try multiple possible fields
+  if command -v jq >/dev/null 2>&1; then
+    TOKEN=$(echo "$BODY_CONTENT" | jq -r '.data.token // .token // .access_token // empty')
+  else
+    # Fallback without jq
+    TOKEN=$(echo "$BODY_CONTENT" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    if [[ -z "$TOKEN" ]]; then
+      TOKEN=$(echo "$BODY_CONTENT" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+    fi
+  fi
+
+  if [[ -n "$TOKEN" && "$TOKEN" != "null" ]]; then
+    __set_argument "--header" "Authorization: Bearer $TOKEN"
+    echo -e "${GREEN}Login successful. Token stored.${NC}"
+  else
+    echo -e "${RED}Login failed or token not found.${NC}"
+    exit 1
+  fi
+  exit 0
+}
+
+logout() {
+  # Remove both old and new format authorization entries
+  local removed=false
+
+  if grep -q '^--header "Authorization:' "$CONFIG_FILE"; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' '/^--header "Authorization:/d' "$CONFIG_FILE"
+    else
+      sed -i '/^--header "Authorization:/d' "$CONFIG_FILE"
+    fi
+    removed=true
+  fi
+
+  if [[ "$removed" == "true" ]]; then
+    echo -e "${GREEN}Authorization token removed.${NC}"
+  else
+    echo -e "${YELLOW}No authorization token found.${NC}"
+  fi
+  exit 0
 }
 
 run() {
