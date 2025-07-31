@@ -2,6 +2,7 @@
 
 # Configuration with environment variable support
 CONTAINER_BASE_NAME="${PHP_CLI_CONTAINER_NAME:-php-cli}"
+CONTAINER_SHELL="${PHP_CLI_SHELL:-/bin/bash}"
 DOCKER_IMAGE="${PHP_CLI_IMAGE:-php:8.3-cli}"
 PLATFORM="${PHP_CLI_PLATFORM:-}"
 LOG_FILE="${PHP_CLI_LOG_FILE:-${HOME}/.local/bin/php.log}"
@@ -294,7 +295,7 @@ enter_shell() {
         fi
     fi
 
-    docker exec -it "$CONTAINER_NAME" /bin/sh
+    docker exec -it "$CONTAINER_NAME" "$CONTAINER_SHELL"
 }
 
 # Function to execute PHP command
