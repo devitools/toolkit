@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# File where the base URL and auth token will be stored
-HTTP_FILE=".http.env"
+CONFIG_FILE=".http.conf"
 
 VERBOSE_MODE=${HTTP_VERBOSE:-0}
 
@@ -23,60 +22,73 @@ JSON_NULL_COLOR=$'\033[1;30m'    # Gray
 JSON_SYMBOL_COLOR=$'\033[1;37m'  # White
 COLOR_RESET=$'\033[0m'
 
-STATUS_CODE_SUCCESS='\033[42;90;1m'   # Green background with bold gray text
-STATUS_CODE_FAIL='\033[43;90;1m'      # Yellow background with bold gray text
-STATUS_CODE_ERROR='\033[41;90;1m'     # Red background with bold gray text
+STATUS_CODE_SUCCESS='\033[42;97;1m'
+STATUS_CODE_FAIL='\033[43;97;1m'
+STATUS_CODE_ERROR='\033[41;97;1m'
 
-get_base_url() {
-  if [[ -f "$HTTP_FILE" ]]; then
-    grep '^BASE_URL=' "$HTTP_FILE" | cut -d'=' -f2-
-  else
-    echo -e "${RED}Error: .http.env not found in the current directory.${NC}" >&2
+get_variable() {
+  local local_curlrc="$CONFIG_FILE"
+  local home_curlrc="$HOME/.curlrc"
+  local value=""
+
+  if [[ -f "$local_curlrc" ]]; then
+    value=$(grep '^variable host=' "$local_curlrc" | head -n1)
+  fi
+
+  if [[ -z "$value" && -f "$home_curlrc" ]]; then
+    value=$(grep '^variable host=' "$home_curlrc" | head -n1)
+  fi
+
+  value=$(echo "$value" | sed 's/^variable host= *//;s/^"//;s/"$//;s/ *$//')
+
+  echo -n "$value"
+}
+
+configure() {
+  if [[ -z "$1" ]]; then
+    echo -e "${RED}Usage: http configure <base-url>${NC}" >&2
     exit 1
   fi
-}
 
-get_auth_token() {
-  if [[ -f "$HTTP_FILE" ]]; then
-    grep '^AUTHORIZATION=' "$HTTP_FILE" | cut -d'=' -f2-
+  local host="$1"
+  if ! grep -q "^variable host=" "$CONFIG_FILE" 2>/dev/null; then
+    echo "variable host=$host" >> "$CONFIG_FILE"
+  else
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s|^variable host=.*|variable host=$host|" "$CONFIG_FILE"
+    else
+      sed -i "s|^variable host=.*|variable host=$host|" "$CONFIG_FILE"
+    fi
   fi
+  echo -e "${GREEN} Host '$host' configured in '$CONFIG_FILE'${NC}"
+  exit 0
 }
 
-save_to_http_file() {
-  if [[ ! -f "$HTTP_FILE" ]]; then
-    touch "$HTTP_FILE"
+save_to_config_file() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    touch "$CONFIG_FILE"
   fi
   local key=$(echo "$1" | tr '[:lower:]' '[:upper:]')
   local value="$2"
 
   # Use a more portable approach for sed
-  if grep -q "^$key=" "$HTTP_FILE"; then
+  if grep -q "^$key=" "$CONFIG_FILE"; then
     if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' "s|^$key=.*|$key=$value|" "$HTTP_FILE"
+      sed -i '' "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
     else
-      sed -i "s|^$key=.*|$key=$value|" "$HTTP_FILE"
+      sed -i "s|^$key=.*|$key=$value|" "$CONFIG_FILE"
     fi
   else
-    echo "$key=$value" >> "$HTTP_FILE"
+    echo "$key=$value" >> "$CONFIG_FILE"
   fi
-}
-
-configure() {
-  if [[ -z "$1" ]]; then
-    echo -e "${RED}Usage: http configure <base_url>${NC}"
-    exit 1
-  fi
-  save_to_http_file "BASE_URL" "$1"
-  echo -e "${GREEN}Base URL set to '$1'${NC}"
-  exit 0
 }
 
 logout() {
-  if grep -q '^AUTHORIZATION=' "$HTTP_FILE"; then
+  if grep -q '^AUTHORIZATION=' "$CONFIG_FILE"; then
     if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/^AUTHORIZATION=/d' "$HTTP_FILE"
+      sed -i '' '/^AUTHORIZATION=/d' "$CONFIG_FILE"
     else
-      sed -i '/^AUTHORIZATION=/d' "$HTTP_FILE"
+      sed -i '/^AUTHORIZATION=/d' "$CONFIG_FILE"
     fi
     echo -e "${GREEN}Authorization token removed.${NC}"
   else
@@ -129,7 +141,6 @@ login() {
     shift 1
   fi
 
-  BASE_URL=$(get_base_url)
   EMAIL=""
   PASSWORD=""
 
@@ -158,29 +169,37 @@ login() {
     JSON_DATA="{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}"
   fi
 
-  echo -e "${BLUE}POST${WHITE} $BASE_URL$ENDPOINT${NC}"
+  echo -e "${YELLOW}Attempting login...${NC}"
   beautify "$JSON_DATA"
   echo
 
-  RESPONSE=$(curl -s -X POST "$BASE_URL$ENDPOINT" \
-    --header 'Content-Type: application/json' \
-    --data "$JSON_DATA")
+  # Use the request method for consistency
+  RESPONSE=$(request "post" "$ENDPOINT" "$JSON_DATA")
 
-  beautify "$RESPONSE"
+  # Extract only the body from the response (remove headers)
+  SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
+  if [[ -n "$SEPARATOR_LINE" ]]; then
+    BODY_CONTENT=$(echo "$RESPONSE" | tail -n +$((SEPARATOR_LINE + 1)))
+    BODY_CONTENT=$(echo "$BODY_CONTENT" | sed '/^[[:space:]]*$/d')
+  else
+    BODY_CONTENT=$(echo "$RESPONSE" | sed -n '/^{/,$p')
+  fi
+
+  beautify "$BODY_CONTENT"
 
   # Extract token - try multiple possible fields
   if command -v jq >/dev/null 2>&1; then
-    TOKEN=$(echo "$RESPONSE" | jq -r '.data.token // .token // .access_token // empty')
+    TOKEN=$(echo "$BODY_CONTENT" | jq -r '.data.token // .token // .access_token // empty')
   else
     # Fallback without jq
-    TOKEN=$(echo "$RESPONSE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    TOKEN=$(echo "$BODY_CONTENT" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
     if [[ -z "$TOKEN" ]]; then
-      TOKEN=$(echo "$RESPONSE" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+      TOKEN=$(echo "$BODY_CONTENT" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
     fi
   fi
 
   if [[ -n "$TOKEN" && "$TOKEN" != "null" ]]; then
-    save_to_http_file "AUTHORIZATION" "$TOKEN"
+    save_to_config_file "AUTHORIZATION" "$TOKEN"
     echo -e "${GREEN}Login successful. Token stored.${NC}"
   else
     echo -e "${RED}Login failed or token not found.${NC}"
@@ -189,32 +208,37 @@ login() {
   exit 0
 }
 
-run() {
-  METHOD="$1"
+request() {
+  local HTTP_VERB="$1"
   shift
 
-  BASE_URL=$(get_base_url)
+  local HTTP_HOST
+  local HTTP_LOCATION
+  local HTTP_EXPAND_URL
+  local HTTP_VERB
 
   ARGS=(--header "Content-Type: application/json")
-  AUTH_TOKEN=$(get_auth_token)
-  if [[ -n "$AUTH_TOKEN" ]]; then
-    ARGS+=(--header "Authorization: Bearer $AUTH_TOKEN")
+  if [[ -f "$CONFIG_FILE" ]]; then
+    ARGS+=(--config "$CONFIG_FILE")
+  fi
+  if [[ "$VERBOSE_MODE" -eq 1 ]]; then
+    ARGS+=(--verbose)
   fi
 
-  case "$METHOD" in
+  case "$HTTP_VERB" in
     post|put|patch)
       ENDPOINT="$1"
       PAYLOAD="$2"
 
       if [[ -z "$ENDPOINT" ]]; then
-        echo -e "${RED}Error: $METHOD requires <endpoint> parameter.${NC}"
-        echo -e "${YELLOW}Usage: http $METHOD <endpoint> '<json_data>'${NC}"
+        echo -e "${RED}Error: $HTTP_VERB requires <endpoint> parameter.${NC}"
+        echo -e "${YELLOW}Usage: http $HTTP_VERB <endpoint> '<json_data>'${NC}"
         exit 1
       fi
 
       if [[ -z "$PAYLOAD" ]]; then
-        echo -e "${RED}Error: $METHOD requires <data> parameter.${NC}"
-        echo -e "${YELLOW}Usage: http $METHOD <endpoint> '<json_data>'${NC}"
+        echo -e "${RED}Error: $HTTP_VERB requires <data> parameter.${NC}"
+        echo -e "${YELLOW}Usage: http $HTTP_VERB <endpoint> '<json_data>'${NC}"
         exit 1
       fi
 
@@ -224,56 +248,58 @@ run() {
     get|delete)
       ENDPOINT="$1"
       if [[ -z "$ENDPOINT" ]]; then
-        echo -e "${RED}Error: $METHOD requires <endpoint> parameter.${NC}"
-        echo -e "${YELLOW}Usage: http $METHOD <endpoint> [curl_args...]${NC}"
+        echo -e "${RED}Error: $HTTP_VERB requires <endpoint> parameter.${NC}"
+        echo -e "${YELLOW}Usage: http $HTTP_VERB <endpoint> [curl_args...]${NC}"
         exit 1
       fi
       shift
       ;;
     *)
-      echo -e "${RED}Error: Unknown method '$METHOD'${NC}"
+      echo -e "${RED}Error: Unknown method '$HTTP_VERB'${NC}"
       exit 1
       ;;
   esac
 
-  METHOD_UPPER=$(echo "$METHOD" | tr '[:lower:]' '[:upper:]')
-  if [[ "$BASE_URL" == */ || "$ENDPOINT" == /* ]]; then
-    LOCATION="${BASE_URL}${ENDPOINT}"
+  HTTP_HOST=$(get_variable)
+  if [[ "$ENDPOINT" == /* ]]; then
+    HTTP_LOCATION="${HTTP_HOST}${ENDPOINT}"
+    HTTP_EXPAND_URL="{{host}}$ENDPOINT"
   else
-    LOCATION="${BASE_URL}/${ENDPOINT}"
+    HTTP_LOCATION="${HTTP_HOST}/${ENDPOINT}"
+    HTTP_EXPAND_URL="{{host}}/$ENDPOINT"
   fi
 
-  if [[ "$VERBOSE_MODE" -eq 1 ]]; then
-    echo -e "${GRAY}curl --include \\ ${NC}"
-    echo -e "${GRAY}  --request $METHOD_UPPER \\ ${NC}"
-    echo -e "${GRAY}  --location $LOCATION \\ ${NC}"
-    for ((i=0; i<${#ARGS[@]}; i+=2)); do
-      if [[ $i+1 -lt ${#ARGS[@]} ]]; then
-        echo -e "${GRAY}  ${ARGS[i]} \"${ARGS[i+1]}\" \\ ${NC}"
-      else
-        echo -e "${GRAY}  ${ARGS[i]} \\ ${NC}"
-      fi
-    done
-    echo -e "${GRAY}  --silent ${NC}"
-    echo
-  fi
+  HTTP_VERB=$(echo "$HTTP_VERB" | tr '[:lower:]' '[:upper:]')
 
-  echo -e "${BLUE}$METHOD_UPPER${WHITE} $LOCATION${NC}"
+  echo -e "${BLUE}$HTTP_VERB${WHITE} $HTTP_LOCATION${NC}"
 
-  RESPONSE=$(curl --include --silent --request "$METHOD_UPPER" --location "$LOCATION" "${ARGS[@]}")
+  RESPONSE=$(
+    curl "${ARGS[@]}" \
+      --expand-url "$HTTP_EXPAND_URL" \
+      --request "$HTTP_VERB" \
+      --include \
+      --no-progress-meter \
+      2>&1
+  )
+
+  echo "$RESPONSE"
+}
+
+run() {
+  local METHOD="$1"
+  shift
+
+  RESPONSE=$(request "$METHOD" "$@")
 
   SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
 
   if [[ -n "$SEPARATOR_LINE" ]]; then
-    # Show headers with custom colors
     if [[ "$VERBOSE_MODE" -eq 1 ]]; then
       echo "$RESPONSE" | head -n "$((SEPARATOR_LINE - 1))" | colorize_headers
       echo
     fi
 
-    # Show body
     BODY_CONTENT=$(echo "$RESPONSE" | tail -n +$((SEPARATOR_LINE + 1)))
-    # Remove any remaining empty lines at the beginning
     BODY_CONTENT=$(echo "$BODY_CONTENT" | sed '/^[[:space:]]*$/d')
 
     if [[ -n "$BODY_CONTENT" ]]; then
@@ -307,7 +333,7 @@ run() {
       echo -e "\n${STATUS_CODE_ERROR} ${STATUS_CODE} ${NC}"
     fi
   else
-    echo -e "\n${WHITE} UKN ${NC}"
+    echo -e "\n${STATUS_CODE_ERROR} UKN ${NC}"
   fi
 }
 
