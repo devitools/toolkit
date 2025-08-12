@@ -390,8 +390,44 @@ header() {
 run() {
   local METHOD="$1"
   shift
+  local NO_COLOR=0
 
-  RESPONSE=$(__request "$METHOD" "$@")
+  # Parse arguments for --no-color parameter
+  local ARGS=()
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --no-color)
+        NO_COLOR=1
+        shift
+        ;;
+      *)
+        ARGS+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  RESPONSE=$(__request "$METHOD" "${ARGS[@]}")
+
+  # If --no-color mode is enabled, output only plain JSON
+  if [[ "$NO_COLOR" -eq 1 ]]; then
+    SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
+
+    if [[ -n "$SEPARATOR_LINE" ]]; then
+      BODY_CONTENT=$(echo "$RESPONSE" | tail -n +$((SEPARATOR_LINE + 1)))
+      BODY_CONTENT=$(echo "$BODY_CONTENT" | sed '/^[[:space:]]*$/d')
+
+      if [[ -n "$BODY_CONTENT" ]]; then
+        echo "$BODY_CONTENT"
+      fi
+    else
+      BODY=$(echo "$RESPONSE" | sed -n '/^{/,$p')
+      if [[ -n "$BODY" ]]; then
+        echo "$BODY"
+      fi
+    fi
+    return
+  fi
 
   SEPARATOR_LINE=$(echo "$RESPONSE" | grep -n "^[[:space:]]*$" | head -n1 | cut -d: -f1)
 
@@ -488,6 +524,7 @@ case "$1" in
     echo "  http header get Accept"
     echo "  http login --email user@example.com --password ***"
     echo "  http get /users"
+    echo "  http get /health --no-color | jq '.message'"
     echo "  http post /users '{\"name\":\"John\",\"email\":\"john@example.com\"}'"
     ;;
   *)
